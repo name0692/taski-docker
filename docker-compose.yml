@@ -15,21 +15,21 @@ services:
       retries: 10
 
   backend:
-    # вариант А: использовать свой образ из Hub
-    image: name0692/taski_backend:1.0.1-amd64
-    # вариант Б: собирать на сервере из Dockerfile (раскомментируй)
-    # build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      # (необязательно) если когда-то будешь собирать не на amd64:
+      # platforms: ["linux/amd64"]
+    # необязательно: тег для локально собранного образа
+    image: name0692/taski_backend:local
     container_name: backend
     env_file: .env
     depends_on:
       db:
         condition: service_healthy
     networks: [taski]
-    # общий том для статики бэка (куда мы скопируем collected_static)
     volumes:
       - static:/backend_static
-    # при отладке можно открыть наружу:
-    # ports: ["8000:8000"]
 
   # фронт нужен только чтобы ПЕРЕЛОЖИТЬ build в общий том и выйти
   frontend:
