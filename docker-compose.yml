@@ -1,65 +1,42 @@
 version: "3.9"
 
+volumes:
+  pg_data:
+  static:
+
 services:
   db:
     image: postgres:13.10
-    container_name: db
     env_file: .env
     volumes:
       - pg_data:/var/lib/postgresql/data
-    networks: [taski]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      # (необязательно) если когда-то будешь собирать не на amd64:
-      # platforms: ["linux/amd64"]
-    # необязательно: тег для локально собранного образа
-    image: name0692/taski_backend:local
-    container_name: backend
     env_file: .env
     depends_on:
-      db:
-        condition: service_healthy
-    networks: [taski]
+      - db
     volumes:
       - static:/backend_static
 
-  # фронт нужен только чтобы ПЕРЕЛОЖИТЬ build в общий том и выйти
   frontend:
-    image: name0692/taski_frontend:1.0.1-amd64
-    # или build: ./frontend
-    container_name: frontend
-    networks: [taski]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    env_file: .env
+    # кладём build в общий том и выходим
+    command: sh -c "cp -r /app/build/. /frontend_static/ || true"
     volumes:
       - static:/frontend_static
-    entrypoint: ["/bin/sh","-c"]
-    command: >
-      "cp -r /app/build/* /frontend_static/ || true"
 
-  nginx:
-    image: nginx:1.25-alpine
-    container_name: nginx
+  gateway:
+    build: ./gateway
     depends_on:
       - backend
       - frontend
     ports:
-      - "80:80"
+      - "8000:80"        # локально :8000, при желании можно "80:80"
     volumes:
-      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - static:/staticfiles:ro
-    networks: [taski]
-
-volumes:
-  pg_data:
-  static:
-
-networks:
-  taski:
-    driver: bridge
