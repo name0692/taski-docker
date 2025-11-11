@@ -1,0 +1,179 @@
+name: Taski CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: taski-prod
+  cancel-in-progress: true
+
+jobs:
+  # === CI: линтер + Django-тесты с Postgres ===
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:13.10
+        env:
+          POSTGRES_USER: django_user
+          POSTGRES_PASSWORD: django_password
+          POSTGRES_DB: django_db
+        ports: [ "5432:5432" ]
+        options: >-
+          --health-cmd "pg_isready -U django_user -d django_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps (flake8 + backend)
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install flake8==6.0.0 flake8-isort==6.0.0
+          pip install -r backend/requirements.txt
+
+      - name: Lint
+        run: python -m flake8 backend/
+
+      - name: Django tests
+        env:
+          POSTGRES_USER: django_user
+          POSTGRES_PASSWORD: django_password
+          POSTGRES_DB: django_db
+          DB_HOST: 127.0.0.1
+          DB_PORT: "5432"
+        run: |
+          cd backend
+          python manage.py test
+
+  # === CI: фронтенд тесты (если есть) ===
+  frontend_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - name: Install
+        run: |
+          cd frontend
+          npm ci
+      - name: Test
+        run: |
+          cd frontend
+          npm run test --if-present
+
+  # === CD: build+push backend ===
+  build_backend:
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build & Push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          platforms: linux/amd64
+          tags: |
+            name0692/taski_backend:latest
+            name0692/taski_backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # === CD: build+push frontend ===
+  build_frontend:
+    runs-on: ubuntu-latest
+    needs: frontend_tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build & Push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          platforms: linux/amd64
+          tags: |
+            name0692/taski_frontend:latest
+            name0692/taski_frontend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # === CD: build+push gateway (nginx) ===
+  build_gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build & Push gateway
+        uses: docker/build-push-action@v6
+        with:
+          context: ./gateway
+          push: true
+          platforms: linux/amd64
+          tags: |
+            name0692/taski_gateway:latest
+            name0692/taski_gateway:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # === Deploy на сервер ===
+  deploy:
+    runs-on: ubuntu-latest
+    needs:
+      - build_backend
+      - build_frontend
+      - build_gateway
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy compose to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          source: "docker-compose.production.yml"
+          target: "taski"
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          script_stop: true
+          script: |
+            set -e
+            cd ~/taski
+            sudo docker compose -f docker-compose.production.yml pull
+            sudo docker compose -f docker-compose.production.yml down
+            sudo docker compose -f docker-compose.production.yml up -d
+            sudo docker compose -f docker-compose.production.yml exec backend python manage.py migrate
+            sudo docker compose -f docker-compose.production.yml exec backend python manage.py collectstatic --noinput
+            sudo docker compose -f docker-compose.production.yml exec backend sh -c 'cp -r /app/collected_static/. /backend_static/static/'
