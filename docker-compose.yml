@@ -1,0 +1,65 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:13.10
+    container_name: db
+    env_file: .env
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks: [taski]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    # вариант А: использовать свой образ из Hub
+    image: name0692/taski_backend:1.0.1-amd64
+    # вариант Б: собирать на сервере из Dockerfile (раскомментируй)
+    # build: ./backend
+    container_name: backend
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [taski]
+    # общий том для статики бэка (куда мы скопируем collected_static)
+    volumes:
+      - static:/backend_static
+    # при отладке можно открыть наружу:
+    # ports: ["8000:8000"]
+
+  # фронт нужен только чтобы ПЕРЕЛОЖИТЬ build в общий том и выйти
+  frontend:
+    image: name0692/taski_frontend:1.0.1-amd64
+    # или build: ./frontend
+    container_name: frontend
+    networks: [taski]
+    volumes:
+      - static:/frontend_static
+    entrypoint: ["/bin/sh","-c"]
+    command: >
+      "cp -r /app/build/* /frontend_static/ || true"
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nginx
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+    volumes:
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - static:/staticfiles:ro
+    networks: [taski]
+
+volumes:
+  pg_data:
+  static:
+
+networks:
+  taski:
+    driver: bridge
