@@ -175,6 +175,28 @@ jobs:
               sudo docker rm $cid || true
             fi
 
+      - name: Render .env on server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          script: |
+            set -e
+            cd ~/taski
+            cat > .env << 'EOF'
+            POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+            POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+      
+            DB_HOST=db
+            DB_PORT=5432
+      
+            DJANGO_DEBUG=0
+            DJANGO_ALLOWED_HOSTS=${{ secrets.DJANGO_ALLOWED_HOSTS }}
+            EOF
+
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
