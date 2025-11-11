@@ -1,0 +1,36 @@
+volumes:
+  pg_data_production:
+  static_production:
+
+services:
+  db:
+    image: postgres:13.10
+    env_file: .env
+    volumes:
+      - pg_data_production:/var/lib/postgresql/data
+
+  backend:
+    image: name0692/taski_backend:1.0.0
+    env_file: .env
+    depends_on:
+      - db
+    volumes:
+      - static_production:/backend_static
+
+  frontend:
+    image: name0692/taski_frontend:1.0.0
+    env_file: .env
+    # сложит build в общий том и завершится
+    command: sh -c "cp -r /app/build/. /frontend_static/ || true"
+    volumes:
+      - static_production:/frontend_static
+
+  gateway:
+    image: name0692/taski_gateway:1.0.0
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "8000:80"
+    volumes:
+      - static_production:/staticfiles:ro
