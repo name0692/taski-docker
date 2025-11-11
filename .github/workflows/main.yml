@@ -161,6 +161,20 @@ jobs:
           source: "docker-compose.production.yml"
           target: "taski"
 
+      - name: Free port 8000 (if occupied)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          script: |
+            cid=$(sudo docker ps -q --filter publish=8000)
+            if [ -n "$cid" ]; then
+              sudo docker stop $cid || true
+              sudo docker rm $cid || true
+            fi
+
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
