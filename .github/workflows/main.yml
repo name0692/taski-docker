@@ -148,7 +148,8 @@ jobs:
       - build_frontend
       - build_gateway
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Copy compose to server
         uses: appleboy/scp-action@v0.1.7
@@ -162,6 +163,11 @@ jobs:
 
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          ALLOWED_HOSTS: ${{ secrets.ALLOWED_HOSTS }}
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USER }}
@@ -171,6 +177,15 @@ jobs:
           script: |
             set -e
             cd ~/taski
+            cat > .env <<EOF
+            POSTGRES_USER=${POSTGRES_USER}
+            POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+            POSTGRES_DB=${POSTGRES_DB}
+            DB_HOST=db
+            DB_PORT=5432
+            ALLOWED_HOSTS=${ALLOWED_HOSTS}
+            DEBUG=0
+            EOF
             sudo docker compose -f docker-compose.production.yml pull
             sudo docker compose -f docker-compose.production.yml down
             sudo docker compose -f docker-compose.production.yml up -d
